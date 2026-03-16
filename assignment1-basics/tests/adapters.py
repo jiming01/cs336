@@ -10,7 +10,7 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 # 使用pretokenization_example.py的 find_chunk_boundaries 
-from ..cs336_basics.pretokenization_example import find_chunk_boundaries
+from cs336_basics.BPETokenizer import BPETokenizer
 # 多线程
 import multiprocessing as mp
 # 正则化
@@ -596,107 +596,6 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-    # 0.维护的数据结构
-    ## vocab: dict[int, bytes]
-    ## merges: list[tuple[bytes, bytes]]
-    ## token_freq: dict[list[bytes, ...], int]
-    ## pair_freq: dict[tuple[bytes, bytes], int]
-    
-    # 1.初始化词表，主进程数据结构
-    special_vocab = {i: st.encode("utf-8") for i ,st in enumerate(special_tokens)}
-    initial_vocab = {i + len(special_vocab): bytes([i]) for i in range(256)}
-    
-    vocab = special_vocab | initial_vocab
-    merges = list[tuple[bytes, bytes]]()
-    pre_token_freq = dict[tuple[bytes, ...], int]() 
-    byte_pair_freq = dict[tuple[bytes, bytes], int]()
-    
-    # 2.pre-tokenization
-    pre_tokenization_pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    spilt_pattern = "|".join(re.escape(token) for token in special_tokens)
-    
-    def pre_tokenization(start, end):
-        with open(input_path, "rb") as f:
-            f.seek(start)
-            chunk = f.read(end - start).decode("utf-8", errors="ignore")
-            
-            # 去掉特殊token
-            texts = re.split(spilt_pattern, chunk)
-            
-            # 生成pre_token迭代器
-            text_iter_list = [re.finditer(pre_tokenization_pattern, text) for text in texts]
-            chunk_iter = itertools.chain(*text_iter_list)
-            
-        return chunk_iter
-    
-    ## 并行化处理
-    with open(input_path, "rb") as f:
-        num_workers = mp.cpu_count() - 1
-        boundaries = find_chunk_boundaries(f, num_workers, b"<|endoftext|>")
-    
-    params = list(zip(boundaries[:-1], boundaries[1:]))
-    with mp.Pool(processes=num_workers) as pool:
-        chunk_iter_list = pool.starmap(pre_tokenization, params)
-    
-    corpus_iter = itertools.chain(*chunk_iter_list)
-    
-    # 3. 训练bpe
-    
-    ## 遍历pre_tokens，初始化pre_token_freq和byte_pair_freq
-    for pre_token in corpus_iter:
-        # str -> list[bytes]
-        pre_token = pre_token.group().encode("utf-8")
-        pre_token = tuple([bytes([b]) for b in pre_token])
-        
-        # 初始化pre_token_freq
-        pre_token_freq[pre_token] = pre_token_freq.get(pre_token, 0) + 1
-        
-        # 初始化byte_pair_freq
-        for byte_pair in zip(pre_token, pre_token[1:]):
-            byte_pair_freq[byte_pair] = byte_pair_freq.get(byte_pair, 0) + 1
-        
-    
-    ## 合并函数
-    def pair_merge(k, v, pair):
-        new_k = []
-        i = 0
-        while i < len(k):
-            if k[i] == pair[0] and i < len(k) - 1 and k[i+1] == pair[1]:
-                new_k.append(pair)
-                i += 2
-                
-                # 更新byte_pair_freq
-                if i > 0:
-                    new_byte_pair = (k[i-1], pair[0] + pair[1])
-                    old_byte_pair = (k[i-1], pair[0])
-                    byte_pair_freq[new_byte_pair] = byte_pair_freq.get(new_byte_pair, 0) + v
-                    byte_pair_freq[old_byte_pair] = byte_pair_freq[old_byte_pair] - v
-                if i < len(k) - 2:
-                    new_byte_pair = (pair[0] + pair[1], k[i+1])
-                    old_byte_pair = (pair[1], k[i+1])
-                    byte_pair_freq[new_byte_pair] = byte_pair_freq.get(new_byte_pair, 0) + v
-                    byte_pair_freq[old_byte_pair] = byte_pair_freq[old_byte_pair] - v
-            else:
-                new_k.append(k[i])
-                i += 1
-        return tuple(new_k)
-
-    ## 训练循环
-    init_size = len(vocab)
-    merge_num = vocab_size - init_size
-    
-    for i in range(merge_num):
-        idx = i + init_size
-        
-        # 找到最多字节对
-        pair, _= max(byte_pair_freq.item(), key=lambda x: (x[1], x[0]))
-        
-        # 加入词表,进行合并
-        vocab[idx] = pair[0] + pair[1]
-        merges.append(pair)
-        
-        # 遍历pre_token_freq更新pre_token_freq和byte_pair_freq
-        pre_token_freq = {pair_merge(k, v, pair): v for k, v in pre_token_freq.items()}
-    
+    bpe = BPETokenizer()
+    vocab, merges = bpe.train(input_path, vocab_size, special_tokens)
     return vocab, merges
-
