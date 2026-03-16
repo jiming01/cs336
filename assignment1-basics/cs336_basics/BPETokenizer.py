@@ -5,7 +5,7 @@ import multiprocessing as mp
 
 from functools import partial
 
-from pretokenization_example import find_chunk_boundaries
+from .pretokenization_example import find_chunk_boundaries
 
 
 class BPETokenizer():
