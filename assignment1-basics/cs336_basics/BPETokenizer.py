@@ -6,7 +6,7 @@ import multiprocess as mp
 from functools import partial
 
 from .pretokenization_example import find_chunk_boundaries
-
+from collections import Counter
 
 class BPETokenizer():
     
@@ -19,19 +19,32 @@ class BPETokenizer():
         initial_vocab = {i + len(special_vocab): bytes([i]) for i in range(256)}
         return special_vocab | initial_vocab
     
-    def _train_pre_tokenization(self, input_path, pattern, start, end):
+    def _train_pre_tokenization(self, input_path, special_tokens, boundary):
+        
+        chunk_pre_token_counter = Counter()
+        chunk_byte_pair_counter = Counter()
+        
+        pre_tokenization_pattern = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+        split_pattern = "|".join(re.escape(token) for token in special_tokens)
+        
         with open(input_path, "rb") as f:
-            f.seek(start)
-            chunk = f.read(end - start).decode("utf-8", errors="ignore")
+            f.seek(boundary[0])
+            chunk = f.read(boundary[1] - boundary[0]).decode("utf-8", errors="ignore")
             
             # 去掉特殊token
-            texts = re.split(pattern[1], chunk)
+            texts = re.split(split_pattern, chunk)
             
             # 生成pre_token迭代器
-            text_iter_list = [re.finditer(pattern[0], text) for text in texts]
+            text_iter_list = [re.finditer(pre_tokenization_pattern, text) for text in texts]
             chunk_iter = itertools.chain(*text_iter_list)
-            
-        return chunk_iter
+
+            for pre_token in chunk_iter:
+                pre_token = pre_token.group().encode("utf-8")
+                pre_token = tuple([bytes([b]) for b in pre_token])
+                
+                chunk_pre_token_counter[pre_token] += 1
+                chunk_byte_pair_counter.update(zip(pre_token, pre_token[1:]))
+        return chunk_pre_token_counter, chunk_byte_pair_counter
     
     def _train_init_freq(self, corpus_iter, pre_token_freq, byte_pair_freq):
         for pre_token in corpus_iter:
@@ -60,12 +73,12 @@ class BPETokenizer():
                 if i > 0:
                     new_byte_pair = (k[i-1], pair[0] + pair[1])
                     old_byte_pair = (k[i-1], pair[0])
-                    byte_pair_freq[new_byte_pair] = byte_pair_freq.get(new_byte_pair, 0) + v
+                    byte_pair_freq[new_byte_pair] = byte_pair_freq[new_byte_pair] + v
                     byte_pair_freq[old_byte_pair] = byte_pair_freq[old_byte_pair] - v
                 if i < len(k) - 2:
                     new_byte_pair = (pair[0] + pair[1], k[i+1])
                     old_byte_pair = (pair[1], k[i+1])
-                    byte_pair_freq[new_byte_pair] = byte_pair_freq.get(new_byte_pair, 0) + v
+                    byte_pair_freq[new_byte_pair] = byte_pair_freq[new_byte_pair] + v
                     byte_pair_freq[old_byte_pair] = byte_pair_freq[old_byte_pair] - v
             else:
                 new_k.append(k[i])
@@ -77,26 +90,20 @@ class BPETokenizer():
         # 初始化所需的数据结构
         vocab = self._train_init_vocab(special_tokens)
         merges = list[tuple[bytes, bytes]]()
-        pre_token_freq = dict[tuple[bytes, ...], int]() 
-        byte_pair_freq = dict[tuple[bytes, bytes], int]()
-        
-        # 定义pre_tokenization和split的正则表达式
-        pre_tokenization_pattern = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-        split_pattern = "|".join(re.escape(token) for token in special_tokens)
+        pre_token_freq = Counter() # dict[tuple[bytes, ...], int]
+        byte_pair_freq = Counter() # dict[tuple[bytes, bytes], int]
         
         # pre-tokenization
         with open(input_path, "rb") as f:
             num_workers = mp.cpu_count() - 1
             boundaries = find_chunk_boundaries(f, num_workers, b"endoftext")
         
-        pre_tokenization_func = partial(self._train_pre_tokenization, input_path, (pre_tokenization_pattern, split_pattern))
+        pre_tokenization_func = partial(self._train_pre_tokenization, input_path, special_tokens)
         with mp.Pool(num_workers) as pool:
-            chunk_iter_list = pool.starmap(pre_tokenization_func, zip(boundaries[:-1], boundaries[1:]))
+            for chunk_pre_token_counter, chunk_byte_pair_counter in pool.imap(pre_tokenization_func, boundaries):
+                pre_token_freq.update(chunk_pre_token_counter)
+                byte_pair_freq.update(chunk_byte_pair_counter)
             
-        corpus_iter = itertools.chain(*chunk_iter_list)
-        
-        # 遍历pre_tokens，初始化pre_token_freq和byte_pair_freq
-        self._train_init_freq(corpus_iter, pre_token_freq, byte_pair_freq)
         
         init_size = len(vocab)
         merge_num = vocab_size - init_size
