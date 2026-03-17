@@ -1,7 +1,7 @@
 import os
 import regex as re
 import itertools
-import multiprocessing as mp
+import multiprocess as mp
 
 from functools import partial
 
