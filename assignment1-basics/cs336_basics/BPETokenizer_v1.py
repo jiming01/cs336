@@ -9,8 +9,8 @@ import os
 class BPETokenizer():
     
     def __init__(self):
-        self.vocab = dict[int, bytes] = {}
-        self.merges = list[tuple(bytes, bytes)] = []
+        self.vocab : dict[int, bytes] = {}
+        self.merges : list[tuple(bytes, bytes)] = []
         
         
     
