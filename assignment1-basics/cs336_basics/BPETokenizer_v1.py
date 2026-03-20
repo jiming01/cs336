@@ -11,8 +11,7 @@ class BPETokenizer():
     def __init__(self):
         self.vocab = dict[int, bytes] = {}
         self.merges = list[tuple(bytes, bytes)] = []
-        self.pre_tokenization_pattern = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
-        self.spilt_pattern = "|".join(re.escape(token) for token in special_tokens)
+        
         
     
     def _train_init_vocab(self, special_tokens):
@@ -40,13 +39,16 @@ class BPETokenizer():
             
     def train(self, input_path, vocab_size, special_tokens):
         
+        pre_tokenization_pattern = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+        spilt_pattern = "|".join(re.escape(token) for token in special_tokens)
+        
         with open(input_path, "rb") as f:
             corpus = f.read().decode("utf-8", errors="ignore")
             
-        spilt_corpus = re.split(self.spilt_pattern, corpus)
+        spilt_corpus = re.split(spilt_pattern, corpus)
         pre_tokens = [] # list[list[bytes, ...]]
         for text in spilt_corpus:
-            text = re.findall(self.pre_tokenization_pattern, text)
+            text = re.findall(pre_tokenization_pattern, text)
             pre_tokens.extend([[bytes(ch, "utf-8") for ch in tk] for tk in text])
             
         self.vocab = self._train_init_vocab(special_tokens)
