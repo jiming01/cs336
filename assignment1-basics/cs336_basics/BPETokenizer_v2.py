@@ -13,7 +13,7 @@
 # N: 词表大小 M: 文本pre-token数量 L: 平均token长度
 # train阶段的时间复杂度 O(N * M * L) 主要在于每次merge后的get_stats,和每次merge都要遍历所有token进行merge
 
-## 1.统计每个pretoken对应的出现次数 dict[tuple[bytes, ...], int],相比于遍历全文可能有效减少重复统计
+## 1.统计每个pretoken对应的出现次数 dict[tuple[bytes, ...], int],相比于遍历全文可能有效减少重复统计 (v1 10s, 10s, 20min -> v2 2s, 2s, 10s)
 
 import regex as re
 import os
@@ -48,7 +48,7 @@ class BPETokenizer():
                 new_token.append(token[i])
                 i += 1
             
-        return new_token
+        return tuple(new_token)
     
     def _train_pre_tokenize(self, input_path, special_tokens):
         pre_tokens = Counter()
@@ -60,11 +60,10 @@ class BPETokenizer():
             corpus = f.read().decode("utf-8", errors="ignore")
             
         spilt_corpus = re.split(spilt_pattern, corpus)
-        pre_tokens = [] # list[list[bytes, ...]]
         for text in spilt_corpus:
             text = re.findall(pre_tokenization_pattern, text)
             # pre_tokens.extend([[bytes(ch, "utf-8") for ch in tk] for tk in text])
-            pre_tokens.update([[bytes([ch]) for ch in tk.encode("utf-8")] for tk in text])
+            pre_tokens.update([tuple([bytes([ch]) for ch in tk.encode("utf-8")]) for tk in text])
         
         return pre_tokens
     
