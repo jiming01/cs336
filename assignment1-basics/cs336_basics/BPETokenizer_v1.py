@@ -53,7 +53,7 @@ class BPETokenizer():
         pre_tokens = [] # list[list[bytes, ...]]
         for text in spilt_corpus:
             text = re.findall(pre_tokenization_pattern, text)
-            pre_tokens.extend([[bytes([ch]) for ch in tk] for tk.encode("utf-8") in text])
+            pre_tokens.extend([[bytes([ch]) for ch in tk.encode("utf-8")] for tk in text])
             
         self.vocab = self._train_init_vocab(special_tokens)
         init_size = len(self.vocab)
