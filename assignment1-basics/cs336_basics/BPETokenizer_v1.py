@@ -2,6 +2,10 @@
 # 维护vocab: dict[int, bytes], merges: list[tuple[bytes,bytes]]
 # 在训练的过程中维护 stats: dict[tuple[bytes, bytes], int]统计每次训练后字节对的计数
 
+# 后续改进
+## 多线程
+## 增量更新
+## 堆
 import regex as re
 import os
 
@@ -49,7 +53,7 @@ class BPETokenizer():
         pre_tokens = [] # list[list[bytes, ...]]
         for text in spilt_corpus:
             text = re.findall(pre_tokenization_pattern, text)
-            pre_tokens.extend([[bytes(ch, "utf-8") for ch in tk] for tk in text])
+            pre_tokens.extend([[bytes([ch]) for ch in tk] for tk.encode("utf-8") in text])
             
         self.vocab = self._train_init_vocab(special_tokens)
         init_size = len(self.vocab)
@@ -60,12 +64,14 @@ class BPETokenizer():
             for tk in pre_tokens:
                 self._train_get_stats(tk, stats)
                 
-            pair = max(stats.items(), key=lambda x: (x[1], x[0]))
+            pair, _ = max(stats.items(), key=lambda x: (x[1], x[0]))
             pre_tokens = [self._train_merge(tk, pair) for tk in pre_tokens]
             
             idx = i + init_size
             self.merges.append(pair)
             self.vocab[idx] = pair[0] + pair[1]
+            
+            print(f"merge {i+1}/{num_merge}: {pair} -> {idx}")
         
         return self.vocab, self.merges
             
