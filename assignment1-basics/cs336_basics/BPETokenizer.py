@@ -7,7 +7,7 @@ from functools import partial
 
 from .pretokenization_example import find_chunk_boundaries
 from collections import Counter
-
+#### 废案，想要把所有优化一起写完，过不了测试，debug不出来
 class BPETokenizer():
     
     def __init__(self):
@@ -76,8 +76,8 @@ class BPETokenizer():
                     byte_pair_freq[new_byte_pair] = byte_pair_freq[new_byte_pair] + v
                     byte_pair_freq[old_byte_pair] = byte_pair_freq[old_byte_pair] - v
                 if i < len(k) - 2:
-                    new_byte_pair = (pair[0] + pair[1], k[i+1])
-                    old_byte_pair = (pair[1], k[i+1])
+                    new_byte_pair = (pair[0] + pair[1], k[i+2])
+                    old_byte_pair = (pair[1], k[i+2])
                     byte_pair_freq[new_byte_pair] = byte_pair_freq[new_byte_pair] + v
                     byte_pair_freq[old_byte_pair] = byte_pair_freq[old_byte_pair] - v
             else:
@@ -100,7 +100,7 @@ class BPETokenizer():
         
         pre_tokenization_func = partial(self._train_pre_tokenization, input_path, special_tokens)
         with mp.Pool(num_workers) as pool:
-            for chunk_pre_token_counter, chunk_byte_pair_counter in pool.imap(pre_tokenization_func, boundaries):
+            for chunk_pre_token_counter, chunk_byte_pair_counter in pool.imap(pre_tokenization_func, zip(boundaries[:-1], boundaries[1:])):
                 pre_token_freq.update(chunk_pre_token_counter)
                 byte_pair_freq.update(chunk_byte_pair_counter)
             

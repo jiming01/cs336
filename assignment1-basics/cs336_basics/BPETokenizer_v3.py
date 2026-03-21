@@ -17,18 +17,26 @@
 ## 2.维护字节队出现的次数 dict[tuple[bytes, bytes], int],在每次merge后增量更新 (A, L),(L, R),(R, B) -> (A, P),(P,B) (v2 0.9s, 0.9s, 6.2s)
 ## 3.理论分析寻找最大pair不是性能瓶颈，测试过关了,偷懒不优化了(BPE卡太久了，不想写了，把多线程搞完就走吧)
 ## 4.多线程
+
+## 多线程出问题了，速度变慢 1.67s,而且又不对了最后一个测试merge出现顺序问题了，某几个pair会向前移动几个位置
+## 好像是分chunk出问题了(n,d),(e,nd)都多了，估计有部分endoftext进来了 
+## boundaries = find_chunk_boundaries(f, num_workers, b"endoftext") 应该是b"<|endoftext|>" 牛逼，能忍住不红温的是这个
+## 发现开了128个进程，换成32或以下就可以通过测试了
+
 import os
 import regex as re
-
+import multiprocessing as mp
 from collections import Counter
+from functools import partial
+
+from .pretokenization_example import find_chunk_boundaries
+
 class BPETokenizer():
     
     def __init__(self):
         self.vocab : dict[int, bytes] = {}
         self.merges : list[tuple(bytes, bytes)] = []
         
-        
-    
     def _train_init_vocab(self, special_tokens):
         special_vocab = {i: st.encode("utf-8") for i ,st in enumerate(special_tokens)}
         initial_vocab = {i + len(special_vocab): bytes([i]) for i in range(256)}
@@ -61,39 +69,57 @@ class BPETokenizer():
             
         return tuple(new_token)
     
-    def _train_pre_tokenize(self, input_path, special_tokens):
-        pre_tokens = Counter()
+    def _train_pre_tokenize(self, input_path, special_tokens, boundary):
+        start, end = boundary
+        chunk_pre_tokens = Counter()
         
         pre_tokenization_pattern = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
         spilt_pattern = "|".join(re.escape(token) for token in special_tokens)
         
         with open(input_path, "rb") as f:
-            corpus = f.read().decode("utf-8", errors="ignore")
+            f.seek(start)
+            corpus = f.read(end - start).decode("utf-8", errors="ignore")
             
         spilt_corpus = re.split(spilt_pattern, corpus)
         for text in spilt_corpus:
             text = re.finditer(pre_tokenization_pattern, text)
-            # pre_tokens.extend([[bytes(ch, "utf-8") for ch in tk] for tk in text])
-            pre_tokens.update([tuple([bytes([ch]) for ch in tk.group().encode("utf-8")]) for tk in text])
+            chunk_pre_tokens.update([tuple([bytes([ch]) for ch in tk.group().encode("utf-8")]) for tk in text])
         
-        return pre_tokens
+        return chunk_pre_tokens
     
+    def _train_mp_pre_tokenize(self, input_path, special_tokens):
+        pre_tokens = Counter()
+        
+        with open(input_path, "rb") as f:
+            num_workers = mp.cpu_count() - 1
+            # boundaries = find_chunk_boundaries(f, num_workers, b"endoftext")
+            boundaries = find_chunk_boundaries(f, num_workers, b"<|endoftext>|")
+        
+        func = partial(self._train_pre_tokenize, input_path, special_tokens)
+        with mp.Pool(num_workers) as pool:
+            for chunk_pre_tokens in pool.imap(func, zip(boundaries[:-1], boundaries[1:])):
+                pre_tokens.update(chunk_pre_tokens)
+
+        return pre_tokens
+            
+        
     def train(self, input_path, vocab_size, special_tokens):
         
-        pre_tokens = self._train_pre_tokenize(input_path, special_tokens)
-        byte_pairs = self._train_init_pair(pre_tokens)
         self.vocab = self._train_init_vocab(special_tokens)
+        pre_tokens = self._train_mp_pre_tokenize(input_path, special_tokens)
+        byte_pairs = self._train_init_pair(pre_tokens)
         
         init_size = len(self.vocab)
         num_merge = vocab_size - init_size
         
         for i in range(num_merge):
-            # stats = {} # dict[tuple[bytes, bytes], int]
-            # for k, v in pre_tokens.items():
-            #     self._train_get_stats(k, v, stats)
+
             pairs_change = (Counter(), Counter())
+            
             pair, _ = max(byte_pairs.items(), key=lambda x: (x[1], x[0]))
+            
             pre_tokens = Counter({self._train_merge(tk, v, pair, pairs_change): v for tk, v in pre_tokens.items()})
+            
             byte_pairs.update(pairs_change[0])
             byte_pairs.subtract(pairs_change[1])
             byte_pairs[pair] = 0
@@ -105,7 +131,5 @@ class BPETokenizer():
             # print(f"merge {i+1}/{num_merge}: {pair} -> {idx}")
         
         return self.vocab, self.merges
-            
-        
             
         
