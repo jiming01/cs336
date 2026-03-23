@@ -10,7 +10,7 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 # 使用pretokenization_example.py的 find_chunk_boundaries 
-from cs336_basics.BPETokenizer import BPETokenizer
+from cs336_basics.BPETokenizer_v3 import BPETokenizer
 # 多线程
 import multiprocessing as mp
 # 正则化
@@ -597,5 +597,6 @@ def run_train_bpe(
                 Merges are ordered by order of creation.
     """
     bpe = BPETokenizer()
-    vocab, merges = bpe.train(input_path, vocab_size, special_tokens)
+    bpe.train(input_path, vocab_size, special_tokens)
+    vocab, merges = bpe.get_result()
     return vocab, merges

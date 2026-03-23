@@ -25,6 +25,8 @@
 
 import os
 import regex as re
+import tqdm
+import json
 import multiprocessing as mp
 from collections import Counter
 from functools import partial
@@ -112,7 +114,8 @@ class BPETokenizer():
         init_size = len(self.vocab)
         num_merge = vocab_size - init_size
         
-        for i in range(num_merge):
+        
+        for i in tqdm(range(num_merge)):
 
             pairs_change = (Counter(), Counter())
             
@@ -130,6 +133,22 @@ class BPETokenizer():
             
             # print(f"merge {i+1}/{num_merge}: {pair} -> {idx}")
         
+        return 
+    
+    def get_result(self):
         return self.vocab, self.merges
-            
+    
+    def save(self, file_path):
+        merges_json = [list(pair) for pair in self.merges]
+        data = {"merges": merges_json,"vocab": self.vocab}
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    
+    def load(self, file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.merges = [tuple(pair) for pair in data["merges"]] 
+        self.vocab = data["vocab"]
         
