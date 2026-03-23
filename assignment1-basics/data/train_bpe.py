@@ -8,4 +8,6 @@ def train_bpe():
     bpe.train(input_path, 10000, ["<|endoftext|>"])
     bpe.save(output_path)
     
+if __name__ == "__main__":
+    train_bpe()
     

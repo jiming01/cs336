@@ -25,7 +25,7 @@
 
 import os
 import regex as re
-import tqdm
+from tqdm import tqdm
 import json
 import multiprocessing as mp
 from collections import Counter
@@ -83,7 +83,7 @@ class BPETokenizer():
             corpus = f.read(end - start).decode("utf-8", errors="ignore")
             
         spilt_corpus = re.split(spilt_pattern, corpus)
-        for text in spilt_corpus:
+        for text in tqdm(spilt_corpus, desc="Pre-tokenizing"):
             text = re.finditer(pre_tokenization_pattern, text)
             chunk_pre_tokens.update([tuple([bytes([ch]) for ch in tk.group().encode("utf-8")]) for tk in text])
         
@@ -94,8 +94,9 @@ class BPETokenizer():
         
         with open(input_path, "rb") as f:
             num_workers = mp.cpu_count() - 1
+            print(f"Using {num_workers} processes for pre-tokenization")
             # boundaries = find_chunk_boundaries(f, num_workers, b"endoftext")
-            boundaries = find_chunk_boundaries(f, num_workers, b"<|endoftext>|")
+            boundaries = find_chunk_boundaries(f, num_workers, b"<|endoftext|>")
         
         func = partial(self._train_pre_tokenize, input_path, special_tokens)
         with mp.Pool(num_workers) as pool:
@@ -139,9 +140,17 @@ class BPETokenizer():
         return self.vocab, self.merges
     
     def save(self, file_path):
+        def convert(obj):
+            if isinstance(obj, bytes):
+                return obj.decode('utf-8', errors='replace')
+            if isinstance(obj, dict):
+                return {convert(k): convert(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return [convert(i) for i in obj]
+            return obj
         merges_json = [list(pair) for pair in self.merges]
         data = {"merges": merges_json,"vocab": self.vocab}
-
+        data = convert(data)
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     
