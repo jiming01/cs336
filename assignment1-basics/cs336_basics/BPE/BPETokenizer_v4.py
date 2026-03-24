@@ -24,6 +24,12 @@
 #Total time spent updating byte pairs: 0.0564 seconds
 
 # 很奇怪owt 优化后训练一轮要预计 48h 还是很慢
+
+## 加堆后
+#Total time spent finding max pairs: 0.2089 seconds
+#Total time spent merging tokens: 193.1460 seconds
+#Total time spent updating byte pairs: 0.6103 seconds
+# N: 词表大小 M: 文本pre-token数量 L: 平均token长度
 import os
 import regex as re
 from tqdm import tqdm
@@ -31,10 +37,15 @@ import json
 import time
 import heapq
 import multiprocessing as mp
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
 from functools import partial
 
 from ..pretokenization_example import find_chunk_boundaries
+
+class PairItem(namedtuple('PairItem', ['key1', 'key2'])):
+    def __lt__(self, other):
+        # 最大堆比较
+        return (self.key1, self.key2) > (other.key1, other.key2)
 
 class BPETokenizer():
     
@@ -116,10 +127,11 @@ class BPETokenizer():
             
     def _train_max_pair(self, pairs_heap, sub_pairs):
         while True:
-            cnt, k0, k1, pair = heapq.heappop(pairs_heap)
+            cnt, pair = heapq.heappop(pairs_heap)
             if pair not in sub_pairs:
-                return pair
-            heapq.heappush(pairs_heap, (cnt + sub_pairs[pair], k0, k1, pair))
+                return (pair[0], pair[1])
+            heapq.heappush(pairs_heap, (cnt + sub_pairs[pair], pair))
+            sub_pairs.pop(pair)
             
         
     def train(self, input_path, vocab_size, special_tokens):
@@ -128,7 +140,9 @@ class BPETokenizer():
         pre_tokens, split_pre_tokens = self._train_mp_pre_tokenize(input_path, special_tokens)# dict[bytes, int], dict[bytes, tuple[bytes, ...]]
         byte_pairs, pair2token = self._train_init_pair(pre_tokens, split_pre_tokens) # dict[tuple[bytes, bytes], int], dict[tuple[bytes, bytes], set(tuple[bytes, ...])]
         
-        pairs_heap = heapq.heapify([(-v, -int.from_bytes(k[0]), -int.from_bytes(k[1]), k) for k, v in byte_pairs.items()])
+        pairs_heap = [(-v, PairItem(k1, k2)) for (k1, k2), v in byte_pairs.items()]
+        heapq.heapify(pairs_heap)
+
         sub_pairs = Counter()
         
         
@@ -147,14 +161,18 @@ class BPETokenizer():
             
             time1 = time.time()
             add_pairs = Counter()
-            split_pre_tokens = Counter({k : self._train_merge(k, v, pre_tokens, pair, sub_pairs, add_pairs, pair2token) if k in pair2token[pair] else v for k, v in split_pre_tokens.items()})
+            #split_pre_tokens = Counter({k : self._train_merge(k, v, pre_tokens, pair, sub_pairs, add_pairs, pair2token) if k in pair2token[pair] else v for k, v in split_pre_tokens.items()})
+            
+            for k in pair2token[pair]:
+                new_v = self._train_merge(k, split_pre_tokens[k], pre_tokens, pair, sub_pairs, add_pairs, pair2token)
+                split_pre_tokens[k] = new_v
+            
             time2 = time.time() 
             merge_time += time2 - time1
             
             time1 = time.time()
-            byte_pairs[pair] = 0
             pair2token[pair].clear()
-            add_pairs_items = [(-v, -int.from_bytes(k[0]), -int.from_bytes(k[1]), k) for k, v in add_pairs.items()]
+            add_pairs_items = [(-v, PairItem(k1, k2)) for (k1,k2), v in add_pairs.items()]
             for item in add_pairs_items:
                 heapq.heappush(pairs_heap, item)
             time2 = time.time()
