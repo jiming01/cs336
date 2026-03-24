@@ -30,11 +30,22 @@
 #Total time spent merging tokens: 193.1460 seconds
 #Total time spent updating byte pairs: 0.6103 seconds
 # N: 词表大小 M: 文本pre-token数量 L: 平均token长度
+
+
+##训练分词器, 认准英特尔至强6767P!
+## tinystory训练具体用时
+# Total time spent finding max pairs: 0.0630 seconds
+# Total time spent merging tokens: 0.9638 seconds
+# Total time spent updating byte pairs: 0.1769 seconds
+
+## owt 
+# Total time spent finding max pairs: 0.8343 seconds
+# Total time spent merging tokens: 268.3155 seconds
+# Total time spent updating byte pairs: 56.7088 seconds
 import os
 import regex as re
 from tqdm import tqdm
 import json
-import time
 import heapq
 import multiprocessing as mp
 from collections import Counter, defaultdict, namedtuple
@@ -149,17 +160,10 @@ class BPETokenizer():
         init_size = len(self.vocab)
         num_merge = vocab_size - init_size
         
-        max_pair_time = 0
-        merge_time = 0
-        update_byte_pairs_time = 0
         for i in tqdm(range(num_merge)):
             
-            time1 = time.time()
             pair = self._train_max_pair(pairs_heap, sub_pairs)
-            time2 = time.time()
-            max_pair_time += time2 - time1
-            
-            time1 = time.time()
+
             add_pairs = Counter()
             #split_pre_tokens = Counter({k : self._train_merge(k, v, pre_tokens, pair, sub_pairs, add_pairs, pair2token) if k in pair2token[pair] else v for k, v in split_pre_tokens.items()})
             
@@ -167,28 +171,15 @@ class BPETokenizer():
                 new_v = self._train_merge(k, split_pre_tokens[k], pre_tokens, pair, sub_pairs, add_pairs, pair2token)
                 split_pre_tokens[k] = new_v
             
-            time2 = time.time() 
-            merge_time += time2 - time1
-            
-            time1 = time.time()
             pair2token[pair].clear()
             add_pairs_items = [(-v, PairItem(k1, k2)) for (k1,k2), v in add_pairs.items()]
             
             for item in add_pairs_items:
                 heapq.heappush(pairs_heap, item)
             
-            time2 = time.time()
-            update_byte_pairs_time += time2 - time1
-            
             idx = i + init_size
             self.merges.append(pair)
             self.vocab[idx] = pair[0] + pair[1]
-            
-            # print(f"merge {i+1}/{num_merge}: {pair} -> {idx}")
-            if (i+1) % 100 == 0:
-                print(f"Total time spent finding max pairs: {max_pair_time/i:.4f} seconds")
-                print(f"Total time spent merging tokens: {merge_time/i:.4f} seconds")
-                print(f"Total time spent updating byte pairs: {update_byte_pairs_time/i:.4f} seconds")
 
         return 
     
