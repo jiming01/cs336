@@ -173,21 +173,22 @@ class BPETokenizer():
             time1 = time.time()
             pair2token[pair].clear()
             add_pairs_items = [(-v, PairItem(k1, k2)) for (k1,k2), v in add_pairs.items()]
+            
             for item in add_pairs_items:
                 heapq.heappush(pairs_heap, item)
+            
             time2 = time.time()
             update_byte_pairs_time += time2 - time1
             
             idx = i + init_size
             self.merges.append(pair)
-            
             self.vocab[idx] = pair[0] + pair[1]
             
             # print(f"merge {i+1}/{num_merge}: {pair} -> {idx}")
-        
-        print(f"Total time spent finding max pairs: {max_pair_time:.4f} seconds")
-        print(f"Total time spent merging tokens: {merge_time:.4f} seconds")
-        print(f"Total time spent updating byte pairs: {update_byte_pairs_time:.4f} seconds")
+            if (i+1) % 100 == 0:
+                print(f"Total time spent finding max pairs: {max_pair_time/i:.4f} seconds")
+                print(f"Total time spent merging tokens: {merge_time/i:.4f} seconds")
+                print(f"Total time spent updating byte pairs: {update_byte_pairs_time/i:.4f} seconds")
 
         return 
     
