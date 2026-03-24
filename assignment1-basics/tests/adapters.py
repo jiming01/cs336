@@ -10,7 +10,7 @@ from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
 # 使用pretokenization_example.py的 find_chunk_boundaries 
-from cs336_basics.BPETokenizer_v3 import BPETokenizer
+from cs336_basics.BPE.BPETokenizer_v3 import BPETokenizer
 # 多线程
 import multiprocessing as mp
 # 正则化
