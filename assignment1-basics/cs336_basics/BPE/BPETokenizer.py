@@ -5,7 +5,7 @@ import multiprocess as mp
 
 from functools import partial
 
-from .pretokenization_example import find_chunk_boundaries
+from ..pretokenization_example import find_chunk_boundaries
 from collections import Counter
 #### 废案，想要把所有优化一起写完，过不了测试，debug不出来
 class BPETokenizer():

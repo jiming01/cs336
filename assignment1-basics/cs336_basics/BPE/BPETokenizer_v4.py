@@ -1,28 +1,15 @@
-# v1在测试中 train_bpe_speed 用时10秒左右
-# 在测试test_train_bpe可以通过
-# 在test_train_bpe_special_tokens中，vocab和merges都不匹配且调试过慢，主要在于merge阶段的效率问题，v2在测试中 train_bpe_speed 用时1秒左右
-
-#
-# v2先实现
-# 后续改进
-## 多线程
-## 增量更新 ok
-## 堆 ok
-#来调试special_token问题
-
 # N: 词表大小 M: 文本pre-token数量 L: 平均token长度
 # train阶段的时间复杂度 O(N * M * L) 主要在于每次merge后的get_stats,和每次merge都要遍历所有token进行merge
 
 ## 1.统计每个pretoken对应的出现次数 dict[tuple[bytes, ...], int],相比于遍历全文可能有效减少重复统计 (v1 10s, 10s, 20min -> v2 2s, 2s, 10s)
 ## 2.维护字节队出现的次数 dict[tuple[bytes, bytes], int],在每次merge后增量更新 (A, L),(L, R),(R, B) -> (A, P),(P,B) (v2 0.9s, 0.9s, 6.2s)
-## 3.理论分析寻找最大pair不是性能瓶颈，测试过关了,偷懒不优化了(BPE卡太久了，不想写了，把多线程搞完就走吧)
+## 3.理论分析寻找最大pair不是性能瓶颈，测试过关了,偷懒不优h化了(BPE卡太久了，不想写了，把多线程搞完就走吧)
 ## 4.多线程
 
-## 多线程出问题了，速度变慢 1.67s,而且又不对了最后一个测试merge出现顺序问题了，某几个pair会向前移动几个位置
-## 好像是分chunk出问题了(n,d),(e,nd)都多了，估计有部分endoftext进来了 
-## boundaries = find_chunk_boundaries(f, num_workers, b"endoftext") 应该是b"<|endoftext|>" 牛逼，能忍住不红温的是这个
-## 发现开了128个进程，换成32或以下就可以通过测试了
+## 在tinystory_train(2G)数据集里 (127线程)pretoken 大概1min, 训练词表(10000)大概 10min
+## 但在 owt_train(11G)数据集里 pretoken大概6min, 训练词表(32000)预计 70h? 
 
+## 优化1 大幅减少 M， 优化2 将get_stats 变为增量更新
 import os
 import regex as re
 from tqdm import tqdm
@@ -31,7 +18,7 @@ import multiprocessing as mp
 from collections import Counter
 from functools import partial
 
-from .pretokenization_example import find_chunk_boundaries
+from ..pretokenization_example import find_chunk_boundaries
 
 class BPETokenizer():
     
@@ -155,7 +142,7 @@ class BPETokenizer():
             json.dump(data, f, ensure_ascii=False, indent=2)
     
     def load(self, file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, "rb", encoding="utf-8") as f:
             data = json.load(f)
 
         self.merges = [tuple(pair) for pair in data["merges"]] 
