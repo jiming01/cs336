@@ -32,7 +32,7 @@ import multiprocessing as mp
 from collections import Counter
 from functools import partial
 
-from .pretokenization_example import find_chunk_boundaries
+from ..pretokenization_example import find_chunk_boundaries
 
 class BPETokenizer():
     

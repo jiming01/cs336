@@ -9,13 +9,29 @@
 ## 在tinystory_train(2G)数据集里 (127线程)pretoken 大概1min, 训练词表(10000)大概 10min
 ## 但在 owt_train(11G)数据集里 pretoken大概6min, 训练词表(32000)预计 70h? 
 
-## 优化1 大幅减少 M， 优化2 将get_stats 变为增量更新
+## 优化1 大幅减少 M， 优化2 将get_stats 变为增量更新, 但merge依然是O(N * M * L)
+## 维护 dict[tuple[bytes, bytes], set(bytes)] 记录每个pair出现在哪些token里，merge时只更新相关token的pair,依旧减少M
+## token bytes 和 tuple[bytes, ...] 分离 前者为pre_tokens的键， 后者进行merge, 维护bytes -> tuple[bytes, ...]的映射
+
+## tinystory训练具体用时
+#Total time spent finding max pairs: 97.0703 seconds
+#Total time spent merging tokens: 711.3150 seconds
+#Total time spent updating byte pairs: 0.2705 seconds
+
+## 优化后
+#Total time spent finding max pairs: 86.0704 seconds
+#Total time spent merging tokens: 158.9194 seconds
+#Total time spent updating byte pairs: 0.0564 seconds
+
+# 很奇怪owt 优化后训练一轮要预计 48h 还是很慢
 import os
 import regex as re
 from tqdm import tqdm
 import json
+import time
+import heapq
 import multiprocessing as mp
-from collections import Counter
+from collections import Counter, defaultdict
 from functools import partial
 
 from ..pretokenization_example import find_chunk_boundaries
@@ -31,26 +47,31 @@ class BPETokenizer():
         initial_vocab = {i + len(special_vocab): bytes([i]) for i in range(256)}
         return special_vocab | initial_vocab
     
-    def _train_init_pair(self, pre_tokens):
+    def _train_init_pair(self, pre_tokens, split_pre_tokens):
         byte_pairs = Counter()
+        pair2token = defaultdict(set)
         for k, v in pre_tokens.items():
-            for pair in zip(k, k[1:]):
+            for pair in zip(split_pre_tokens[k], split_pre_tokens[k][1:]):
                 byte_pairs[pair] += v
-        return byte_pairs
+                pair2token[pair].add(k)
+        return byte_pairs, pair2token
     
-    def _train_merge(self, token, num, pair, pairs_change):
+    def _train_merge(self, k, token, pre_tokens, pair, sub_pairs, add_pairs, pair2token):
         new_token = []
-        pairs_add, pairs_sub = pairs_change
+        num = pre_tokens[k]
+        
         i = 0
         while i < len(token):
             if token[i] == pair[0] and i < len(token) - 1 and token[i + 1] == pair[1]:
                 new_token.append(pair[0] + pair[1])
                 if i > 0:
-                    pairs_sub[(token[i-1], pair[0])] += num
-                    pairs_add[(token[i-1], pair[0] + pair[1])] += num
+                    sub_pairs[(token[i-1], pair[0])] += num
+                    add_pairs[(token[i-1], pair[0] + pair[1])] += num
+                    pair2token[(token[i-1], pair[0] + pair[1])].add(k)
                 if i < len(token) - 2:
-                    pairs_sub[(pair[1], token[i+2])] += num
-                    pairs_add[(pair[0] + pair[1], token[i+2])] += num
+                    sub_pairs[(pair[1], token[i+2])] += num
+                    add_pairs[(pair[0] + pair[1], token[i+2])] += num
+                    pair2token[(pair[0] + pair[1], token[i+2])].add(k)
                 i += 2
             else:
                 new_token.append(token[i])
@@ -72,7 +93,8 @@ class BPETokenizer():
         spilt_corpus = re.split(spilt_pattern, corpus)
         for text in tqdm(spilt_corpus, desc="Pre-tokenizing"):
             text = re.finditer(pre_tokenization_pattern, text)
-            chunk_pre_tokens.update([tuple([bytes([ch]) for ch in tk.group().encode("utf-8")]) for tk in text])
+            # chunk_pre_tokens.update([tuple([bytes([ch]) for ch in tk.group().encode("utf-8")]) for tk in text])
+            chunk_pre_tokens.update(tk.group().encode("utf-8") for tk in text)
         
         return chunk_pre_tokens
     
@@ -89,38 +111,66 @@ class BPETokenizer():
         with mp.Pool(num_workers) as pool:
             for chunk_pre_tokens in pool.imap(func, zip(boundaries[:-1], boundaries[1:])):
                 pre_tokens.update(chunk_pre_tokens)
-
-        return pre_tokens
+        split_pre_tokens = Counter({token: tuple(bytes([ch]) for ch in token) for token, _ in pre_tokens.items()})
+        return pre_tokens, split_pre_tokens
+            
+    def _train_max_pair(self, pairs_heap, sub_pairs):
+        while True:
+            cnt, k0, k1, pair = heapq.heappop(pairs_heap)
+            if pair not in sub_pairs:
+                return pair
+            heapq.heappush(pairs_heap, (cnt + sub_pairs[pair], k0, k1, pair))
             
         
     def train(self, input_path, vocab_size, special_tokens):
         
-        self.vocab = self._train_init_vocab(special_tokens)
-        pre_tokens = self._train_mp_pre_tokenize(input_path, special_tokens)
-        byte_pairs = self._train_init_pair(pre_tokens)
+        self.vocab = self._train_init_vocab(special_tokens) # dict[int, bytes]
+        pre_tokens, split_pre_tokens = self._train_mp_pre_tokenize(input_path, special_tokens)# dict[bytes, int], dict[bytes, tuple[bytes, ...]]
+        byte_pairs, pair2token = self._train_init_pair(pre_tokens, split_pre_tokens) # dict[tuple[bytes, bytes], int], dict[tuple[bytes, bytes], set(tuple[bytes, ...])]
+        
+        pairs_heap = heapq.heapify([(-v, -int.from_bytes(k[0]), -int.from_bytes(k[1]), k) for k, v in byte_pairs.items()])
+        sub_pairs = Counter()
+        
         
         init_size = len(self.vocab)
         num_merge = vocab_size - init_size
         
-        
+        max_pair_time = 0
+        merge_time = 0
+        update_byte_pairs_time = 0
         for i in tqdm(range(num_merge)):
-
-            pairs_change = (Counter(), Counter())
             
-            pair, _ = max(byte_pairs.items(), key=lambda x: (x[1], x[0]))
+            time1 = time.time()
+            pair = self._train_max_pair(pairs_heap, sub_pairs)
+            time2 = time.time()
+            max_pair_time += time2 - time1
             
-            pre_tokens = Counter({self._train_merge(tk, v, pair, pairs_change): v for tk, v in pre_tokens.items()})
+            time1 = time.time()
+            add_pairs = Counter()
+            split_pre_tokens = Counter({k : self._train_merge(k, v, pre_tokens, pair, sub_pairs, add_pairs, pair2token) if k in pair2token[pair] else v for k, v in split_pre_tokens.items()})
+            time2 = time.time() 
+            merge_time += time2 - time1
             
-            byte_pairs.update(pairs_change[0])
-            byte_pairs.subtract(pairs_change[1])
+            time1 = time.time()
             byte_pairs[pair] = 0
+            pair2token[pair].clear()
+            add_pairs_items = [(-v, -int.from_bytes(k[0]), -int.from_bytes(k[1]), k) for k, v in add_pairs.items()]
+            for item in add_pairs_items:
+                heapq.heappush(pairs_heap, item)
+            time2 = time.time()
+            update_byte_pairs_time += time2 - time1
             
             idx = i + init_size
             self.merges.append(pair)
+            
             self.vocab[idx] = pair[0] + pair[1]
             
             # print(f"merge {i+1}/{num_merge}: {pair} -> {idx}")
         
+        print(f"Total time spent finding max pairs: {max_pair_time:.4f} seconds")
+        print(f"Total time spent merging tokens: {merge_time:.4f} seconds")
+        print(f"Total time spent updating byte pairs: {update_byte_pairs_time:.4f} seconds")
+
         return 
     
     def get_result(self):

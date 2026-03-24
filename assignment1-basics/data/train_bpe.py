@@ -1,5 +1,5 @@
 import json
-from cs336_basics.BPE.BPETokenizer_v3 import BPETokenizer
+from cs336_basics.BPE.BPETokenizer_v4 import BPETokenizer
 
 def train_bpe():
     input_path = "./"
