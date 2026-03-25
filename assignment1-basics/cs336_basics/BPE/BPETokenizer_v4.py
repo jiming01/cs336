@@ -292,11 +292,11 @@ class BPETokenizer():
         return vocab, merges
     
     @classmethod
-    def save(
+    def to_file(
         cls,
         vocab: dict[int, bytes],
         merges: list[tuple[bytes, bytes]],
-        save_dir: str = None,):
+        save_dir: str):
         
         # 将bytes映射到unicode字符
         def convert(obj):
