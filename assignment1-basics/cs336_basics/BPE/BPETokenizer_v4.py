@@ -364,10 +364,6 @@ class BPETokenizer():
         word: str
         ) -> list[int]:
         
-        # 特殊符号，直接返回
-        if word in self.special_tokens:
-            return [self.token2id[word]]
-        
         # 之前出现并记录,直接返回
         if word in self.word2ids:
             return self.word2ids[word]
@@ -396,11 +392,11 @@ class BPETokenizer():
                 try:
                     # 寻找i后符合pair[0]字节的序号，找到直接跳到该处 
                     j = word_split.index(pair[0], i)
-                    new_word_split.extend(word[i:j])
+                    new_word_split.extend(word_split[i:j])
                     i = j
                 except:
                     # 没找到就可以合并下一个pair了
-                    new_word_split.extend(word[i:])
+                    new_word_split.extend(word_split[i:])
                     break
                 
                 if word_split[i] == pair[0] and i+1 < len(word_split) and word_split[i+1] == pair[1]:
@@ -414,11 +410,10 @@ class BPETokenizer():
             # 更新合并后的word_split与如果没pair了就可以了
             # 还有就更新pairs_set
             word_split = new_word_split
-            if len(word) == 1:
+            if len(word_split) == 1:
                 break
             else:
                 pairs_set = set(zip(word_split, word_split[1:]))
-        
         # merge好的word_split转换成ids
         ids = [self.token2id[token] for token in word_split]
         self.word2ids[word] = ids
@@ -438,13 +433,18 @@ class BPETokenizer():
         pattern_2 = "|".join(f"({re.escape(token)})" for token in self.special_tokens)
         
         split_text = re.split(pattern_2, text)
-        
+        # 当有多个special_token时,split回传回多个结果
+        # 匹配成功正常返回，失败则为None,需要过滤
         # 划分成word级别得到ids并拼接
-        for chunk in tqdm(split_text, desc="encoding"):
-            chunk = re.finditer(pattern_1, chunk)
-            chunk_ids = [self._encode_word(tk.group().encode("utf-8")) for tk in chunk]
-            text_ids.extend([ids for w_ids in chunk_ids for ids in w_ids])
-        
+        for chunk in split_text:
+            if chunk is None:
+                continue
+            if chunk in self.special_tokens:
+                text_ids.append(self.token2id[chunk.encode("utf-8")])
+            else:
+                chunk = re.finditer(pattern_1, chunk)
+                chunk_ids = [self._encode_word(tk.group().encode("utf-8")) for tk in chunk]
+                text_ids.extend([ids for w_ids in chunk_ids for ids in w_ids])
         return text_ids
             
     def encode_iterable(
@@ -460,6 +460,7 @@ class BPETokenizer():
         token_ids: list[int]
         ) -> str:
         text = b''.join([self.vocab[ids] for ids in token_ids])
-        text = "" + text.decode("utf-8", errors="replace")
+        text = text.decode("utf-8", errors="replace")
+        return text
     
         
