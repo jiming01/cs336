@@ -460,6 +460,6 @@ class BPETokenizer():
         token_ids: list[int]
         ) -> str:
         text = b''.join([self.vocab[ids] for ids in token_ids])
-        text = text.decode("utf-8", errors="replace")
+        text = "" + text.decode("utf-8", errors="replace")
     
         
